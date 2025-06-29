@@ -13,7 +13,11 @@ import (
 // ChatRequest represents the incoming Google Chat webhook request
 type ChatRequest struct {
 	Message struct {
-		Text string `json:"text"`
+		Text   string `json:"text"`
+		Sender struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		} `json:"sender"`
 	} `json:"message"`
 }
 
@@ -26,6 +30,14 @@ type ChatResponse struct {
 func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	text := strings.TrimSpace(req.Message.Text)
 
+	// Get user identifier (prefer email, fallback to name, then default)
+	userID := "default"
+	if req.Message.Sender.Email != "" {
+		userID = req.Message.Sender.Email
+	} else if req.Message.Sender.Name != "" {
+		userID = req.Message.Sender.Name
+	}
+
 	// Parse commands
 	addCmd := regexp.MustCompile(`^add\s+(.+)$`)
 	listCmd := regexp.MustCompile(`^list$`)
@@ -35,14 +47,14 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	case addCmd.MatchString(text):
 		matches := addCmd.FindStringSubmatch(text)
 		taskContent := strings.TrimSpace(matches[1])
-		response, err := addTask(ctx, taskContent)
+		response, err := addTask(ctx, taskContent, userID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add task: %w", err)
 		}
 		return &ChatResponse{Text: response}, nil
 
 	case listCmd.MatchString(text):
-		response, err := listTasks(ctx)
+		response, err := listTasks(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list tasks: %w", err)
 		}
@@ -51,7 +63,7 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	case doneCmd.MatchString(text):
 		matches := doneCmd.FindStringSubmatch(text)
 		taskID, _ := strconv.Atoi(matches[1])
-		response, err := markTaskDone(ctx, taskID)
+		response, err := markTaskDone(ctx, taskID, userID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to mark task as done: %w", err)
 		}
@@ -65,13 +77,13 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	}
 }
 
-func addTask(ctx context.Context, content string) (string, error) {
+func addTask(ctx context.Context, content string, userID string) (string, error) {
 	var id int
 	err := sqldb.QueryRow(ctx, `
-		INSERT INTO tasks (content) 
-		VALUES ($1) 
+		INSERT INTO tasks (content, user_id) 
+		VALUES ($1, $2) 
 		RETURNING id
-	`, content).Scan(&id)
+	`, content, userID).Scan(&id)
 
 	if err != nil {
 		return "", err
@@ -80,12 +92,13 @@ func addTask(ctx context.Context, content string) (string, error) {
 	return fmt.Sprintf("✅ Task added with ID: %d", id), nil
 }
 
-func listTasks(ctx context.Context) (string, error) {
+func listTasks(ctx context.Context, userID string) (string, error) {
 	rows, err := sqldb.Query(ctx, `
 		SELECT id, content, done 
 		FROM tasks 
+		WHERE user_id = $1
 		ORDER BY id
-	`)
+	`, userID)
 	if err != nil {
 		return "", err
 	}
@@ -120,12 +133,12 @@ func listTasks(ctx context.Context) (string, error) {
 	return "📋 Your tasks:\n" + strings.Join(tasks, "\n"), nil
 }
 
-func markTaskDone(ctx context.Context, taskID int) (string, error) {
+func markTaskDone(ctx context.Context, taskID int, userID string) (string, error) {
 	result, err := sqldb.Exec(ctx, `
 		UPDATE tasks 
 		SET done = true 
-		WHERE id = $1
-	`, taskID)
+		WHERE id = $1 AND user_id = $2
+	`, taskID, userID)
 
 	if err != nil {
 		return "", err
@@ -134,7 +147,7 @@ func markTaskDone(ctx context.Context, taskID int) (string, error) {
 	rowsAffected := result.RowsAffected()
 
 	if rowsAffected == 0 {
-		return fmt.Sprintf("❌ Task with ID %d not found", taskID), nil
+		return fmt.Sprintf("❌ Task with ID %d not found or doesn't belong to you", taskID), nil
 	}
 
 	return fmt.Sprintf("✅ Task %d marked as done!", taskID), nil
