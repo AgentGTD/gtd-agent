@@ -31,8 +31,14 @@ type Action struct {
 	} `json:"parameters"`
 }
 
-// ChatResponse represents the response to Google Chat
+// ChatResponse represents the response to Google Chat webhook
 type ChatResponse struct {
+	Text  string `json:"text,omitempty"`
+	Cards []Card `json:"cards,omitempty"`
+}
+
+// Alternative response format for debugging
+type ChatResponseV2 struct {
 	Text  string `json:"text,omitempty"`
 	Cards []Card `json:"cards,omitempty"`
 }
@@ -59,7 +65,6 @@ type Widget struct {
 	TextParagraph *TextParagraph `json:"textParagraph,omitempty"`
 	ButtonList    *ButtonList    `json:"buttonList,omitempty"`
 	Divider       *Divider       `json:"divider,omitempty"`
-	TextInput     *TextInput     `json:"textInput,omitempty"`
 }
 
 // TextParagraph represents a text paragraph widget
@@ -97,15 +102,6 @@ type CardAction struct {
 // Divider represents a divider widget
 type Divider struct{}
 
-// TextInput represents a text input widget
-type TextInput struct {
-	Name           string  `json:"name"`
-	Label          string  `json:"label"`
-	Type           string  `json:"type"`
-	Value          string  `json:"value,omitempty"`
-	OnChangeAction OnClick `json:"onChangeAction,omitempty"`
-}
-
 //encore:api public method=POST path=/chat
 func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	// Handle card actions (button clicks)
@@ -127,6 +123,8 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 	addCmd := regexp.MustCompile(`^add\s+(.+)$`)
 	listCmd := regexp.MustCompile(`^list$`)
 	doneCmd := regexp.MustCompile(`^done\s+(\d+)$`)
+	editCmd := regexp.MustCompile(`^edit\s+(\d+)\s+(.+)$`)
+	testCmd := regexp.MustCompile(`^test$`)
 
 	switch {
 	case addCmd.MatchString(text):
@@ -154,11 +152,26 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 		}
 		return response, nil
 
+	case editCmd.MatchString(text):
+		matches := editCmd.FindStringSubmatch(text)
+		taskID, _ := strconv.Atoi(matches[1])
+		newContent := strings.TrimSpace(matches[2])
+		response, err := editTask(ctx, taskID, newContent, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to edit task: %w", err)
+		}
+		return response, nil
+
+	case testCmd.MatchString(text):
+		return createTestCard(), nil
+
 	default:
 		return &ChatResponse{Text: `Available commands:
 • add <task> - Add a new task
 • list - List all tasks
-• done <id> - Mark task as done`}, nil
+• done <id> - Mark task as done
+• edit <id> <new content> - Edit a task
+• test - Test card functionality`}, nil
 	}
 }
 
@@ -237,7 +250,7 @@ func showEditForm(ctx context.Context, taskID int, userID string) (*ChatResponse
 		return &ChatResponse{Text: fmt.Sprintf("❌ Task with ID %d not found or doesn't belong to you", taskID)}, nil
 	}
 
-	// Create an edit form card
+	// Create a simple card showing the current content with instructions
 	card := Card{
 		Header: &CardHeader{
 			Title: fmt.Sprintf("✏️ Edit Task #%d", taskID),
@@ -246,19 +259,8 @@ func showEditForm(ctx context.Context, taskID int, userID string) (*ChatResponse
 			{
 				Widgets: []Widget{
 					{
-						TextInput: &TextInput{
-							Name:  "content",
-							Label: "Task content:",
-							Type:  "SINGLE_LINE",
-							Value: content,
-							OnChangeAction: OnClick{
-								Action: CardAction{
-									ActionMethodName: "editTask",
-									Parameters: map[string]string{
-										"taskId": strconv.Itoa(taskID),
-									},
-								},
-							},
+						TextParagraph: &TextParagraph{
+							Text: fmt.Sprintf("Current content: %s\n\nTo edit this task, use the command:\nedit %d <new content>", content, taskID),
 						},
 					},
 					{
@@ -267,19 +269,6 @@ func showEditForm(ctx context.Context, taskID int, userID string) (*ChatResponse
 					{
 						ButtonList: &ButtonList{
 							Buttons: []Button{
-								{
-									TextButton: &TextButton{
-										Text: "Save",
-										OnClick: OnClick{
-											Action: CardAction{
-												ActionMethodName: "editTask",
-												Parameters: map[string]string{
-													"taskId": strconv.Itoa(taskID),
-												},
-											},
-										},
-									},
-								},
 								{
 									TextButton: &TextButton{
 										Text: "Cancel",
@@ -565,4 +554,45 @@ func editTask(ctx context.Context, taskID int, newContent string, userID string)
 
 	// Return updated task list
 	return listTasks(ctx, userID)
+}
+
+// Test function to create a simple card for debugging
+func createTestCard() *ChatResponse {
+	card := Card{
+		Header: &CardHeader{
+			Title: "Test Card",
+		},
+		Sections: []CardSection{
+			{
+				Widgets: []Widget{
+					{
+						TextParagraph: &TextParagraph{
+							Text: "This is a test card to verify the structure works correctly.",
+						},
+					},
+					{
+						ButtonList: &ButtonList{
+							Buttons: []Button{
+								{
+									TextButton: &TextButton{
+										Text: "Test Button",
+										OnClick: OnClick{
+											Action: CardAction{
+												ActionMethodName: "test",
+												Parameters: map[string]string{
+													"test": "value",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	return &ChatResponse{Cards: []Card{card}}
 }
