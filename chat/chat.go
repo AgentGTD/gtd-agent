@@ -163,7 +163,7 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 		return response, nil
 
 	case testCmd.MatchString(text):
-		return createTestCard(), nil
+		return &ChatResponse{Text: "🧪 Test command working! The bot is responding correctly."}, nil
 
 	default:
 		return &ChatResponse{Text: `Available commands:
@@ -171,7 +171,7 @@ func HandleChat(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
 • list - List all tasks
 • done <id> - Mark task as done
 • edit <id> <new content> - Edit a task
-• test - Test card functionality`}, nil
+• test - Test bot functionality`}, nil
 	}
 }
 
@@ -250,45 +250,7 @@ func showEditForm(ctx context.Context, taskID int, userID string) (*ChatResponse
 		return &ChatResponse{Text: fmt.Sprintf("❌ Task with ID %d not found or doesn't belong to you", taskID)}, nil
 	}
 
-	// Create a simple card showing the current content with instructions
-	card := Card{
-		Header: &CardHeader{
-			Title: fmt.Sprintf("✏️ Edit Task #%d", taskID),
-		},
-		Sections: []CardSection{
-			{
-				Widgets: []Widget{
-					{
-						TextParagraph: &TextParagraph{
-							Text: fmt.Sprintf("Current content: %s\n\nTo edit this task, use the command:\nedit %d <new content>", content, taskID),
-						},
-					},
-					{
-						Divider: &Divider{},
-					},
-					{
-						ButtonList: &ButtonList{
-							Buttons: []Button{
-								{
-									TextButton: &TextButton{
-										Text: "Cancel",
-										OnClick: OnClick{
-											Action: CardAction{
-												ActionMethodName: "list",
-												Parameters:       map[string]string{},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	return &ChatResponse{Cards: []Card{card}}, nil
+	return &ChatResponse{Text: fmt.Sprintf("✏️ Edit Task #%d\nCurrent content: %s\n\nTo edit this task, use the command:\nedit %d <new content>", taskID, content, taskID)}, nil
 }
 
 func addTask(ctx context.Context, content string, userID string) (*ChatResponse, error) {
@@ -303,61 +265,8 @@ func addTask(ctx context.Context, content string, userID string) (*ChatResponse,
 		return nil, err
 	}
 
-	// Return a card showing the newly added task
-	card := Card{
-		Header: &CardHeader{
-			Title:    "✅ Task Added",
-			Subtitle: fmt.Sprintf("Task ID: %d", id),
-		},
-		Sections: []CardSection{
-			{
-				Widgets: []Widget{
-					{
-						TextParagraph: &TextParagraph{
-							Text: content,
-						},
-					},
-					{
-						Divider: &Divider{},
-					},
-					{
-						ButtonList: &ButtonList{
-							Buttons: []Button{
-								{
-									TextButton: &TextButton{
-										Text: "Mark as Done",
-										OnClick: OnClick{
-											Action: CardAction{
-												ActionMethodName: "markDone",
-												Parameters: map[string]string{
-													"taskId": strconv.Itoa(id),
-												},
-											},
-										},
-									},
-								},
-								{
-									TextButton: &TextButton{
-										Text: "Delete",
-										OnClick: OnClick{
-											Action: CardAction{
-												ActionMethodName: "deleteTask",
-												Parameters: map[string]string{
-													"taskId": strconv.Itoa(id),
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	return &ChatResponse{Cards: []Card{card}}, nil
+	// Return a simple text response for now
+	return &ChatResponse{Text: fmt.Sprintf("✅ Task added with ID: %d\nContent: %s", id, content)}, nil
 }
 
 func listTasks(ctx context.Context, userID string) (*ChatResponse, error) {
@@ -372,12 +281,7 @@ func listTasks(ctx context.Context, userID string) (*ChatResponse, error) {
 	}
 	defer rows.Close()
 
-	var tasks []struct {
-		ID      int
-		Content string
-		Done    bool
-	}
-
+	var tasks []string
 	for rows.Next() {
 		var id int
 		var content string
@@ -387,11 +291,12 @@ func listTasks(ctx context.Context, userID string) (*ChatResponse, error) {
 			return nil, err
 		}
 
-		tasks = append(tasks, struct {
-			ID      int
-			Content string
-			Done    bool
-		}{id, content, done})
+		status := "❌"
+		if done {
+			status = "✅"
+		}
+
+		tasks = append(tasks, fmt.Sprintf("%d. %s %s", id, status, content))
 	}
 
 	if err := rows.Err(); err != nil {
@@ -402,92 +307,7 @@ func listTasks(ctx context.Context, userID string) (*ChatResponse, error) {
 		return &ChatResponse{Text: "📝 No tasks found. Use 'add <task>' to create your first task!"}, nil
 	}
 
-	// Create a card for each task
-	var cards []Card
-	for _, task := range tasks {
-		status := "❌"
-		if task.Done {
-			status = "✅"
-		}
-
-		card := Card{
-			Header: &CardHeader{
-				Title: fmt.Sprintf("%s Task #%d", status, task.ID),
-			},
-			Sections: []CardSection{
-				{
-					Widgets: []Widget{
-						{
-							TextParagraph: &TextParagraph{
-								Text: task.Content,
-							},
-						},
-						{
-							Divider: &Divider{},
-						},
-						{
-							ButtonList: &ButtonList{
-								Buttons: createTaskButtons(task.ID, task.Done),
-							},
-						},
-					},
-				},
-			},
-		}
-		cards = append(cards, card)
-	}
-
-	return &ChatResponse{Cards: cards}, nil
-}
-
-func createTaskButtons(taskID int, done bool) []Button {
-	buttons := []Button{}
-
-	if !done {
-		buttons = append(buttons, Button{
-			TextButton: &TextButton{
-				Text: "Mark as Done",
-				OnClick: OnClick{
-					Action: CardAction{
-						ActionMethodName: "markDone",
-						Parameters: map[string]string{
-							"taskId": strconv.Itoa(taskID),
-						},
-					},
-				},
-			},
-		})
-	}
-
-	buttons = append(buttons, Button{
-		TextButton: &TextButton{
-			Text: "Edit",
-			OnClick: OnClick{
-				Action: CardAction{
-					ActionMethodName: "editTask",
-					Parameters: map[string]string{
-						"taskId": strconv.Itoa(taskID),
-					},
-				},
-			},
-		},
-	})
-
-	buttons = append(buttons, Button{
-		TextButton: &TextButton{
-			Text: "Delete",
-			OnClick: OnClick{
-				Action: CardAction{
-					ActionMethodName: "deleteTask",
-					Parameters: map[string]string{
-						"taskId": strconv.Itoa(taskID),
-					},
-				},
-			},
-		},
-	})
-
-	return buttons
+	return &ChatResponse{Text: "📋 Your tasks:\n" + strings.Join(tasks, "\n")}, nil
 }
 
 func markTaskDone(ctx context.Context, taskID int, userID string) (*ChatResponse, error) {
@@ -507,8 +327,7 @@ func markTaskDone(ctx context.Context, taskID int, userID string) (*ChatResponse
 		return &ChatResponse{Text: fmt.Sprintf("❌ Task with ID %d not found or doesn't belong to you", taskID)}, nil
 	}
 
-	// Return updated task list
-	return listTasks(ctx, userID)
+	return &ChatResponse{Text: fmt.Sprintf("✅ Task %d marked as done!", taskID)}, nil
 }
 
 func deleteTask(ctx context.Context, taskID int, userID string) (*ChatResponse, error) {
@@ -527,8 +346,7 @@ func deleteTask(ctx context.Context, taskID int, userID string) (*ChatResponse, 
 		return &ChatResponse{Text: fmt.Sprintf("❌ Task with ID %d not found or doesn't belong to you", taskID)}, nil
 	}
 
-	// Return updated task list
-	return listTasks(ctx, userID)
+	return &ChatResponse{Text: fmt.Sprintf("🗑️ Task %d deleted!", taskID)}, nil
 }
 
 func editTask(ctx context.Context, taskID int, newContent string, userID string) (*ChatResponse, error) {
@@ -552,47 +370,5 @@ func editTask(ctx context.Context, taskID int, newContent string, userID string)
 		return &ChatResponse{Text: fmt.Sprintf("❌ Task with ID %d not found or doesn't belong to you", taskID)}, nil
 	}
 
-	// Return updated task list
-	return listTasks(ctx, userID)
-}
-
-// Test function to create a simple card for debugging
-func createTestCard() *ChatResponse {
-	card := Card{
-		Header: &CardHeader{
-			Title: "Test Card",
-		},
-		Sections: []CardSection{
-			{
-				Widgets: []Widget{
-					{
-						TextParagraph: &TextParagraph{
-							Text: "This is a test card to verify the structure works correctly.",
-						},
-					},
-					{
-						ButtonList: &ButtonList{
-							Buttons: []Button{
-								{
-									TextButton: &TextButton{
-										Text: "Test Button",
-										OnClick: OnClick{
-											Action: CardAction{
-												ActionMethodName: "test",
-												Parameters: map[string]string{
-													"test": "value",
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	return &ChatResponse{Cards: []Card{card}}
+	return &ChatResponse{Text: fmt.Sprintf("✏️ Task %d updated to: %s", taskID, newContent)}, nil
 }
